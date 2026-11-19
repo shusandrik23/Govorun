@@ -5,10 +5,7 @@
   const MODULES = window.GOVORUN_MODULES;
   const LESSONS = MODULES.flatMap((m) => m.lessons);
   const CFG = window.GOVORUN_CONFIG || {};
-  const cap = window.Capacitor;
-  const isNative = !!(cap && cap.isNativePlatform && cap.isNativePlatform());
-  const hasPlugin = (n) => isNative && !!(cap.PluginHeaders || []).some((p) => p.name === n);
-  const plugin = (n) => (hasPlugin(n) ? cap.registerPlugin(n) : null);
+  const plugin = (n) => window.Native.plugin(n);
   const NativeClipboard = plugin('Clipboard');
   const NativeShare = plugin('Share');
   const NativeApp = plugin('App');

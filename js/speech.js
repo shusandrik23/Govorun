@@ -2,10 +2,8 @@
 // В Android-приложении — встроенный распознаватель телефона (плагин @capacitor-community/speech-recognition),
 // в браузере — Web Speech API (Chrome, Safari). Интерфейс один: Speech.create().start(onText) / stop().
 (function () {
-  const cap = window.Capacitor;
-  const isNative = !!(cap && cap.isNativePlatform && cap.isNativePlatform());
-  const hasNativePlugin = isNative && !!(cap.PluginHeaders || []).some((p) => p.name === 'SpeechRecognition');
-  const nativeSR = hasNativePlugin ? cap.registerPlugin('SpeechRecognition') : null;
+  const isNative = window.Native.isNative;
+  const nativeSR = window.Native.plugin('SpeechRecognition');
   const WebSR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   let nativeAvailable = null; // выясняется асинхронно
@@ -182,8 +180,8 @@
   };
 
   // Вибрация в Android-приложении — через плагин Haptics (в браузере — navigator.vibrate в fx.js).
-  if (isNative && (cap.PluginHeaders || []).some((p) => p.name === 'Haptics')) {
-    const haptics = cap.registerPlugin('Haptics');
+  const haptics = window.Native.plugin('Haptics');
+  if (haptics) {
     window.NativeHaptics = {
       light() { haptics.impact({ style: 'LIGHT' }).catch(() => {}); },
       heavy() { haptics.notification({ type: 'ERROR' }).catch(() => {}); },

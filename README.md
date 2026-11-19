@@ -56,6 +56,7 @@ curl -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/s
 |---|---|
 | `js/lessons.js` | Кейсы, темы лифтовых презентаций, слова для импровизации, слова-паразиты, шаги конструктора |
 | `js/app.js` | Вся логика: вкладки, урок, тренажёр, конструктор, профиль, анализ речи, отзыв Попугая, сохранение |
+| `js/native.js` | Подключение Android-плагинов и показ ошибки на экране, если приложение упало |
 | `js/speech.js` | Распознавание речи (Android / браузер) и вибрация |
 | `js/fx.js` | Звуки (Web Audio) и конфетти |
 | `js/config.js` | Адрес Worker и тайм-аут |
@@ -65,6 +66,9 @@ curl -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/s
 Как добавить кейс: скопировать объект урока в `GOVORUN_MODULES` (`js/lessons.js`) и заполнить `story`, `xray`, `anti`, `quiz`, `builder`, `voice`.
 
 ## Сборка
+
+`npm run build` кладёт в `www/js/vendor/capacitor.js` ядро `@capacitor/core`: оно добавляет `window.Capacitor.registerPlugin`, без которого нативные плагины в Android недоступны.
+
 
 ```bash
 npm ci
