@@ -479,3 +479,25 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .set-row { width: 100%; text-align: left; font-weight: 800; }
 .avatar { cursor: pointer; transition: transform .15s; }
 .avatar:active { transform: scale(.92); }
+
+/* ---------- Модули, письменный вариант, задания из уроков ---------- */
+.path + .path { padding-top: 0; }
+.module-locked .unit-banner { filter: grayscale(.85); opacity: .75; }
+.mic-badge { position: absolute; right: -4px; bottom: -6px; width: 30px; height: 30px; border-radius: 50%; background: #fff; border: 3px solid var(--blue); font-size: 15px; display: flex; align-items: center; justify-content: center; animation: bump 1.6s ease-in-out infinite; }
+.new-card.pending { background: var(--blue-l); border-color: #84D8FF; }
+.wr-input { width: 100%; margin-top: 14px; font: inherit; font-size: 16px; font-weight: 700; line-height: 1.45; padding: 12px 14px; border: 2px solid var(--gray); border-radius: 14px; background: var(--gray-l); resize: vertical; min-height: 110px; outline: none; color: var(--text); -webkit-user-select: text; user-select: text; }
+.wr-input:focus { border-color: var(--blue); background: #fff; }
+.wr-hint { margin-top: 10px; font-size: 13.5px; line-height: 1.4; color: var(--muted); font-weight: 700; }
+.foot-row { display: flex; justify-content: space-between; gap: 8px; }
+.foot-row .btn.link { width: auto; flex: 1; padding: 10px 6px; margin-top: 4px; }
+.seg-btn { font-size: 12.5px; padding: 10px 2px; white-space: nowrap; }
+.lv-list { display: grid; gap: 10px; }
+.lv-item { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 2px solid var(--gray); border-radius: 16px; box-shadow: 0 4px 0 var(--gray); text-align: left; transition: transform .08s, box-shadow .08s; }
+.lv-item:active { transform: translateY(4px); box-shadow: none; }
+.lv-item.pending { border-color: #84D8FF; box-shadow: 0 4px 0 #84D8FF; background: var(--blue-l); }
+.lv-ico { font-size: 28px; width: 40px; text-align: center; }
+.lv-body { flex: 1; min-width: 0; }
+.lv-body b { display: block; font-size: 16px; font-weight: 900; }
+.lv-body small { color: var(--muted); font-size: 13px; font-weight: 800; }
+.lv-state { font-size: 13px; font-weight: 900; color: var(--blue); white-space: nowrap; }
+.lv-item:not(.pending) .lv-state { color: var(--green-d); }

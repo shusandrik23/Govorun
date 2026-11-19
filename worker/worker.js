@@ -38,8 +38,9 @@ const SYSTEM = [
 
 function buildPrompt(b) {
   const lines = [];
-  const mode = { lesson: 'Голосовое задание урока', pitch: 'Лифтовая презентация', improv: 'Импровизация со случайными словами' }[b.mode] || 'Упражнение';
+  const mode = { lesson: 'Голосовое задание урока', pitch: 'Лифтовая презентация', improv: 'Импровизация со случайными словами', written: 'Письменное задание урока' }[b.mode] || 'Упражнение';
   lines.push(`Упражнение: ${mode}.`);
+  if (b.mode === 'written') lines.push('Человек сейчас не может говорить вслух и написал текст. Оцени текст: убедительность и приём. Не упоминай темп, голос и распознавание речи; в конце мягко предложи потом произнести это вслух.');
   if (b.technique) lines.push(`Изучаемый приём: ${clip(b.technique, 120)}${b.techniqueHint ? ` (${clip(b.techniqueHint, 200)})` : ''}.`);
   if (b.task) lines.push(`Задание: ${clip(b.task, 300)}`);
   if (b.topic) lines.push(`Тема: ${clip(b.topic, 150)}.`);
@@ -48,7 +49,7 @@ function buildPrompt(b) {
   if (b.wpm) lines.push(`Темп: ${Math.round(Number(b.wpm) || 0)} слов в минуту (комфортно 110–150).`);
   const f = b.fillers && typeof b.fillers === 'object' ? Object.entries(b.fillers).slice(0, 10) : [];
   lines.push(f.length ? `Слова-паразиты: ${f.map(([w, n]) => `«${clip(w, 20)}» ×${Number(n) || 0}`).join(', ')}.` : 'Слов-паразитов нет.');
-  lines.push(`Расшифровка речи: ${clip(b.transcript, 1500) || '(пусто)'}`);
+  lines.push(`${b.mode === 'written' ? 'Текст' : 'Расшифровка речи'}: ${clip(b.transcript, 1500) || '(пусто)'}`);
   return lines.join('\n');
 }
 

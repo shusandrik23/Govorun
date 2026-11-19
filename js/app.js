@@ -106,6 +106,7 @@
   function rank() { let r = RANKS[0]; for (const x of RANKS) if (S.gems >= x[0]) r = x; return r; }
   function nextRank() { return RANKS.find((x) => x[0] > S.gems) || null; }
   const isDone = (id) => !!S.completed[id];
+  const voiceOk = (id) => !!(S.completed[id] && S.completed[id].voice);
   const currentIndex = () => { const i = LESSONS.findIndex((l) => !isDone(l.id)); return i === -1 ? LESSONS.length : i; };
 
   // ------------------------------------------------------------------ анализ речи (на телефоне)
@@ -135,14 +136,25 @@
     return { words, wpm, fillers, fillerTotal, html, tokens };
   }
 
+  const NUMBER_STEMS = ['сто', 'двест', 'трист', 'тысяч', 'миллион', 'миллиард', 'десят', 'дцат', 'сорок', 'девяност', 'процент', 'половин', 'дважды', 'втрое'];
   function checkBonus(bonus, a) {
-    if (!bonus) return false;
-    if (bonus.type === 'keywords') return bonus.words.some((w) => a.tokens.includes(norm(w)));
+    if (!bonus || !a.words) return false;
+    const toks = a.tokens.filter(Boolean);
+    if (bonus.type === 'keywords') {
+      const joined = ` ${toks.join(' ')} `;
+      return bonus.words.some((w) => joined.includes(` ${w.split(' ').map(norm).join(' ')} `));
+    }
     if (bonus.type === 'repeat') {
       const c = {};
-      a.tokens.forEach((t) => { if (t.length > 1) c[t] = (c[t] || 0) + 1; });
-      return Object.values(c).some((n) => n >= 3);
+      toks.forEach((t) => { if (t.length > 1) c[t] = (c[t] || 0) + 1; });
+      return Object.values(c).some((n) => n >= (bonus.min || 3));
     }
+    if (bonus.type === 'match') {
+      const want = bonus.text.split(/\s+/).map(norm).filter(Boolean);
+      return want.filter((w) => toks.includes(w)).length / want.length >= 0.7;
+    }
+    if (bonus.type === 'number') return toks.some((t) => /\d/.test(t) || NUMBER_STEMS.some((n) => t.includes(n)));
+    if (bonus.type === 'maxWords') return a.words >= 4 && a.words <= bonus.n;
     return false;
   }
 
@@ -156,9 +168,9 @@
   // Отзыв Попугая без интернета — из подсчитанной статистики.
   function localParrot(a, ctx) {
     const lines = [];
-    if (a.words < 4) return 'Кр-р-р… я почти ничего не расслышал! Поднеси телефон ближе и скажи хотя бы пару предложений.';
-    if (ctx.bonusHit && ctx.technique) lines.push(pick([`Приём «${ctx.technique}» я услышал — кр-р-расота!`, `«${ctx.technique}» сработал, мне прямо захотелось аплодировать крыльями!`]));
-    else if (ctx.technique) lines.push(pick([`Мысль понятна, но приём «${ctx.technique}» прозвучал неярко — попробуй выделить его голосом.`, `Хорошее начало! Добавь в следующий раз приём «${ctx.technique}» поярче.`]));
+    if (a.words < 4) return ctx.written ? 'Кр-р-р… маловато! Напиши хотя бы одно-два предложения.' : 'Кр-р-р… я почти ничего не расслышал! Поднеси телефон ближе и скажи хотя бы пару предложений.';
+    if (ctx.bonusHit && ctx.technique) lines.push(pick([`Приём «${ctx.technique}» я ${ctx.written ? 'вижу' : 'услышал'} — кр-р-расота!`, `«${ctx.technique}» сработал, мне прямо захотелось аплодировать крыльями!`]));
+    else if (ctx.technique) lines.push(pick([`Мысль понятна, но приём «${ctx.technique}» прозвучал неярко — ${ctx.written ? 'сделай его заметнее' : 'попробуй выделить его голосом'}.`, `Хорошее начало! Добавь в следующий раз приём «${ctx.technique}» поярче.`]));
     else lines.push(pick(['Ты говоришь уверенно — это половина успеха!', 'Кр-р-руто, мысль звучит живо!']));
     if (a.wpm) {
       if (a.wpm < 90) lines.push(`Темп ${a.wpm} слов в минуту — медленновато, добавь энергии.`);
@@ -169,7 +181,7 @@
       const top = Object.entries(a.fillers).sort((x, y) => y[1] - x[1])[0];
       lines.push(`Слово «${top[0]}» проскочило ${top[1]} ${plural(top[1], 'раз', 'раза', 'раз')} — замени его паузой.`);
     } else {
-      lines.push('Ни одного слова-паразита — чистая речь!');
+      lines.push(ctx.written ? 'Ни одного слова-паразита — а теперь попробуй сказать это вслух!' : 'Ни одного слова-паразита — чистая речь!');
     }
     return lines.slice(0, 3).join(' ');
   }
@@ -217,7 +229,7 @@
     return `
       <div class="report">
         <div class="result-grid">
-          <div class="card"><b style="color:var(--blue)">${a.wpm || '—'}</b><small>слов в минуту${a.wpm ? ' · ' + tempoVerdict(a.wpm) : ''}</small></div>
+          ${opts.written ? `<div class="card"><b style="color:var(--blue)">${a.words}</b><small>${plural(a.words, 'слово', 'слова', 'слов')}</small></div>` : `<div class="card"><b style="color:var(--blue)">${a.wpm || '—'}</b><small>слов в минуту${a.wpm ? ' · ' + tempoVerdict(a.wpm) : ''}</small></div>`}
           <div class="card"><b style="color:${a.fillerTotal ? 'var(--red)' : 'var(--green)'}">${a.fillerTotal}</b><small>${plural(a.fillerTotal, 'слово-паразит', 'слова-паразита', 'слов-паразитов')}</small></div>
           ${opts.extra || ''}
         </div>
@@ -225,7 +237,7 @@
         <div class="transcript ${a.words ? '' : 'empty'}">${a.words ? a.html : 'Речь не распознана'}</div>
         <div class="parrot-box" id="parrot-${id}">
           <span class="p-ava">🦜</span>
-          <div class="p-text"><span class="typing"><i></i><i></i><i></i></span> Попугай слушает запись…</div>
+          <div class="p-text"><span class="typing"><i></i><i></i><i></i></span> ${opts.written ? 'Попугай читает текст…' : 'Попугай слушает запись…'}</div>
         </div>
       </div>`;
   }
@@ -345,24 +357,25 @@
     const cur = currentIndex();
     const offsets = [0, 64, 92, 64, 0, -64, -92, -64];
     let html = '';
-    MODULES.forEach((m) => {
+    const r = rank(); const nr = nextRank();
+    const pct = nr ? Math.round(((S.gems - r[0]) / (nr[0] - r[0])) * 100) : 100;
+    MODULES.forEach((m, mi) => {
       const done = m.lessons.filter((l) => isDone(l.id)).length;
-      const r = rank(); const nr = nextRank();
-      const pct = nr ? Math.round(((S.gems - r[0]) / (nr[0] - r[0])) * 100) : 100;
-      html += `<div class="path">
-        <div class="unit-banner">
+      const locked = !isDone(m.lessons[0].id) && LESSONS.indexOf(m.lessons[0]) > cur;
+      html += `<div class="path ${locked ? 'module-locked' : ''}">
+        <div class="unit-banner" style="${m.color ? `background:${m.color};box-shadow:0 4px 0 ${m.shadow || m.color}` : ''}">
           <div style="flex:1">
             <small>${esc(m.subtitle)} · пройдено ${done}/${m.lessons.length}</small>
             <h2>${esc(m.title)}</h2>
             <div class="unit-progress"><i style="width:${(done / m.lessons.length) * 100}%"></i></div>
           </div>
-          <div class="unit-ico">🎤</div>
+          <div class="unit-ico">${locked ? '🔒' : m.icon || '🎤'}</div>
         </div>
-        <button class="charisma-bar" id="charisma-btn">
+        ${mi === 0 ? `<button class="charisma-bar" id="charisma-btn">
           <span class="ch-ico">${r[2]}</span>
           <span class="ch-body"><b>Шкала харизмы · ${esc(r[1])}</b><span class="lvl-bar"><i style="width:${pct}%"></i></span></span>
           <span class="ch-val">${S.gems} 💎</span>
-        </button>
+        </button>` : ''}
         <div class="snake">`;
       m.lessons.forEach((l, i) => {
         const gi = LESSONS.indexOf(l);
@@ -372,7 +385,7 @@
           ${state === 'current' ? `<div class="start-bubble">${S.completed && Object.keys(S.completed).length ? 'Дальше' : 'Начать'}</div>` : ''}
           <button class="node ${state}" data-lesson="${gi}" aria-label="${esc(l.title)}">
             <span class="node-ico">${state === 'locked' ? '🔒' : l.icon}</span>
-            ${state === 'done' ? '<span class="check">✓</span>' : ''}
+            ${state === 'done' ? (voiceOk(l.id) ? '<span class="check">✓</span>' : '<span class="mic-badge" title="Голосовое задание не выполнено">🎤</span>') : ''}
           </button>
           <div class="node-label">${esc(l.title)}<small>${esc(l.technique.name)}</small></div>
         </div>`;
@@ -382,9 +395,9 @@
           <div class="chest ${all ? 'open' : ''}">🏆</div>
           <div class="node-label">${all ? 'Модуль пройден!' : 'Финал модуля'}</div>
         </div>
-        <div class="path-mascot" style="right:6%;top:150px">🦜</div>
+        ${mi === 0 ? '<div class="path-mascot" style="right:6%;top:150px">🦜</div>' : ''}
         </div>
-        <div class="next-unit"><div class="divider">Модуль 2 · Сила голоса — скоро</div></div>
+        ${mi === MODULES.length - 1 ? '<div class="next-unit"><div class="divider">Новые модули — скоро</div></div>' : ''}
       </div>`;
     });
     v.innerHTML = html;
@@ -402,9 +415,12 @@
     const done = isDone(l.id);
     sheet(`<div class="s-ico">${l.icon}</div><h3>${esc(l.title)}</h3>
       <p>Приём: <b style="color:${l.technique.color}">${l.technique.emoji} ${esc(l.technique.name)}</b><br>История · Рентген речи · Антипример · Тест · Сборка фразы · Голосовой челлендж</p>
-      <button class="btn" data-go>${done ? 'Повторить урок (+5 💎)' : 'Начать урок'}</button>
+      ${done ? `<button class="btn ${voiceOk(l.id) ? 'ghost' : 'blue'}" data-voice>🎤 ${voiceOk(l.id) ? 'Голосовое задание ещё раз' : 'Голосовое задание · не выполнено'}</button>` : ''}
+      <button class="btn ${done ? 'ghost' : ''}" data-go>${done ? 'Повторить весь урок (+5 💎)' : 'Начать урок'}</button>
       <button class="btn link" data-close>Не сейчас</button>`, (s) => {
       $('[data-go]', s).onclick = () => { closeSheet(); openLesson(i); };
+      const vb = $('[data-voice]', s);
+      if (vb) vb.onclick = () => { closeSheet(); openLesson(i, 'voice'); };
       $('[data-close]', s).onclick = closeSheet;
     });
   }
@@ -413,12 +429,14 @@
   const STEPS = ['story', 'xray', 'anti', 'quiz', 'builder', 'voice'];
   let L = null;
 
-  function openLesson(i) {
+  // mode: 'full' — весь урок; 'voice' — только голосовое задание (без сердечек).
+  function openLesson(i, mode) {
+    mode = mode || 'full';
     refreshHearts();
-    if (S.hearts <= 0) { heartsSheet(); return; }
+    if (mode === 'full' && S.hearts <= 0) { heartsSheet(); return; }
     FX.unlock();
     const lesson = LESSONS[i];
-    L = { i, lesson, step: 0, mistakes: 0, voiceDone: false, seen: new Set(), quiz: { sel: null, wrong: new Set() }, b: null, rec: null };
+    L = { i, lesson, mode, steps: mode === 'voice' ? ['voice'] : STEPS, step: 0, mistakes: 0, voiceDone: false, writtenDone: false, writtenText: '', seen: new Set(), quiz: { sel: null, wrong: new Set() }, b: null, rec: null };
     const el = $('#lesson');
     el.classList.remove('hidden');
     el.innerHTML = `<div class="lesson-inner">
@@ -455,7 +473,7 @@
 
   function setProgress() {
     const p = $('#l-prog');
-    if (p) p.style.width = `${(L.step / STEPS.length) * 100}%`;
+    if (p) p.style.width = `${(L.step / L.steps.length) * 100}%`;
     const h = $('#l-hearts span');
     if (h) h.textContent = S.hearts;
   }
@@ -478,7 +496,7 @@
   function nextStep() {
     stopAllRecording();
     L.step++;
-    if (L.step >= STEPS.length) finishLesson();
+    if (L.step >= L.steps.length) finishLesson();
     else renderStep();
   }
 
@@ -487,11 +505,13 @@
     setProgress();
     const body = $('#l-body');
     body.scrollTop = 0;
-    const s = STEPS[L.step];
+    const s = L.steps[L.step];
     ({ story: stepStory, xray: stepXray, anti: stepAnti, quiz: stepQuiz, builder: stepBuilder, voice: stepVoice })[s](body);
   }
 
-  const kicker = (n, t) => `<div class="step-kicker">Шаг ${n} из ${STEPS.length} · ${t}</div>`;
+  const kicker = (n, t) => (L.mode === 'voice'
+    ? `<div class="step-kicker">${t} · ${esc(L.lesson.title)}</div>`
+    : `<div class="step-kicker">Шаг ${n} из ${STEPS.length} · ${t}</div>`);
 
   // Шаг 1. История
   function stepStory(body) {
@@ -647,22 +667,19 @@
       <div class="situation"><div class="mascot">🦜</div><div class="bubble voice-task">${esc(v.task)}</div></div>
       <div class="voice-example">Например: ${esc(v.example)}</div>
       <div id="rec-zone"></div>`;
-    foot(`<button class="btn" id="go" disabled>Продолжить</button><button class="btn link" id="skip">Я сейчас не могу говорить</button>`);
-    $('#skip').onclick = () => {
-      stopAllRecording();
-      sfx('tap');
-      showFeedback(true, 'Ничего страшного!', 'Повторите упражнение вслух, когда будет удобно. Приём уже в вашей колоде.', 'Я подожду, у попугаев много терпения!', 'Продолжить', nextStep);
-    };
+    foot(`<button class="btn" id="go" disabled>${L.mode === 'voice' ? 'Готово' : 'Продолжить'}</button><button class="btn link" id="skip">Я сейчас не могу говорить</button>`);
+    $('#skip').onclick = () => { stopAllRecording(); sfx('tap'); hap('light'); stepWritten(body); };
     $('#go').onclick = () => { sfx('tap'); nextStep(); };
     mountRecorder($('#rec-zone'), {
       seconds: VOICE_SECONDS,
       id: 'lesson',
-      onDone: (text, secs) => {
+      onDone: (text, secs, honor) => {
+        if (honor) { L.voiceDone = true; $('#go').disabled = false; return { html: '<div class="reward-strip">🎉 Задание засчитано!</div>' }; }
         const a = analyzeSpeech(text, secs);
         const bonusHit = checkBonus(v.bonus, a);
         const ok = a.words >= 4;
         if (ok) { L.voiceDone = true; $('#go').disabled = false; sfx('correct'); hap('success'); } else { hap('error'); }
-        const extra = `<div class="card full ${bonusHit ? 'hit' : ''}"><b>${bonusHit ? '✅' : '➖'}</b><small>${esc(v.bonus.label)}${bonusHit ? ' — приём услышан' : ' — не услышал'}</small></div>`;
+        const extra = v.bonus ? `<div class="card full ${bonusHit ? 'hit' : ''}"><b>${bonusHit ? '✅' : '➖'}</b><small>${esc(v.bonus.label)}${bonusHit ? ' — получилось' : ' — пока не услышал'}</small></div>` : '';
         return {
           html: (ok ? '' : '<div class="notice">Слишком коротко — скажите хотя бы одно-два предложения.</div>') + speechReportHTML(a, 'lesson', { extra }),
           after: () => fillParrot('lesson', a, { technique: l.technique.name, bonusHit }, {
@@ -674,15 +691,61 @@
     });
   }
 
+  // Аналог голосового задания для тех, кто сейчас не может говорить: тот же приём, но письменно.
+  function stepWritten(body) {
+    const l = L.lesson, v = l.voice;
+    body.scrollTop = 0;
+    body.innerHTML = `${kicker(6, 'Письменное задание')}
+      <h2 class="step-title">Напишите так, как сказали бы вслух</h2>
+      <div class="situation"><div class="mascot">🦜</div><div class="bubble voice-task">${esc(v.task)}</div></div>
+      <div class="voice-example">Например: ${esc(v.example)}</div>
+      <textarea id="wr-input" class="wr-input" rows="4" maxlength="600" placeholder="Ваша фраза с приёмом «${esc(l.technique.name)}»…">${esc(L.writtenText)}</textarea>
+      <div class="wr-hint">✍️ Письменный вариант засчитает задание, а голосовое останется на карте со значком 🎤 — вернитесь к нему, когда сможете говорить.</div>
+      <div id="wr-result"></div>`;
+    foot(`<button class="btn" id="wr-check" disabled>Проверить</button>
+      <div class="foot-row"><button class="btn link" id="wr-mic">🎤 К микрофону</button><button class="btn link" id="wr-skip">Пропустить</button></div>`);
+    const input = $('#wr-input'), btn = $('#wr-check');
+    let checked = false;
+    const sync = () => { L.writtenText = input.value; if (checked) { checked = false; btn.textContent = 'Проверить'; } btn.disabled = !input.value.trim(); };
+    input.addEventListener('input', sync);
+    sync();
+    $('#wr-mic').onclick = () => { sfx('tap'); renderStep(); };
+    $('#wr-skip').onclick = () => {
+      sfx('tap');
+      showFeedback(true, 'Ничего страшного!', 'Голосовое задание будет ждать на карте со значком 🎤.', 'Я подожду, у попугаев много терпения!', 'Продолжить', nextStep);
+    };
+    btn.onclick = () => {
+      if (checked) { sfx('tap'); nextStep(); return; }
+      const text = input.value.trim();
+      const a = analyzeSpeech(text, 0);
+      const bonusHit = checkBonus(v.bonus, a);
+      const ok = a.words >= 4;
+      const extra = v.bonus ? `<div class="card full ${bonusHit ? 'hit' : ''}"><b>${bonusHit ? '✅' : '➖'}</b><small>${esc(v.bonus.label)}${bonusHit ? ' — получилось' : ' — пока не видно'}</small></div>` : '';
+      $('#wr-result').innerHTML = (ok ? '' : '<div class="notice">Маловато — напишите хотя бы одно-два предложения.</div>') + speechReportHTML(a, 'written', { extra, written: true });
+      if (ok) {
+        L.writtenDone = true; checked = true;
+        btn.textContent = L.mode === 'voice' ? 'Готово' : 'Продолжить';
+        sfx('correct'); hap('success');
+      } else hap('error');
+      fillParrot('written', a, { technique: l.technique.name, bonusHit, written: true }, {
+        mode: 'written', technique: l.technique.name, techniqueHint: l.technique.formula, task: v.task,
+        transcript: text, wpm: 0, fillers: a.fillers,
+      });
+      setTimeout(() => $('#wr-result').scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+    };
+  }
+
   function finishLesson() {
+    if (L.mode === 'voice') return finishVoiceOnly();
     const l = L.lesson;
     const first = !isDone(l.id);
     const perfect = L.mistakes === 0;
     let gems = first ? 20 : 5;
     if (first && perfect) gems += 5;
     if (L.voiceDone) gems += 10;
-    const prev = S.completed[l.id] || { times: 0, perfect: false };
-    S.completed[l.id] = { times: prev.times + 1, perfect: prev.perfect || perfect };
+    else if (L.writtenDone) gems += 5;
+    const prev = S.completed[l.id] || { times: 0, perfect: false, voice: false };
+    S.completed[l.id] = { times: prev.times + 1, perfect: prev.perfect || perfect, voice: !!prev.voice || L.voiceDone };
     S.stats.lessons++;
     if (perfect) S.stats.perfect++;
     if (L.voiceDone) { S.stats.voice++; S.stats.speeches++; }
@@ -703,12 +766,43 @@
       </div>
       ${first ? `<div class="new-card"><span>${l.technique.emoji}</span><div><b>Новая карточка в колоде!</b><br>«${esc(l.technique.name)}» — смотрите в профиле 🦜</div></div>` : ''}
       ${grew ? '<div class="new-card" style="animation-delay:.8s"><span>🔥</span><div><b>Огонёк горит!</b><br>Сегодняшний день засчитан</div></div>' : ''}
+      ${voiceOk(l.id) ? '' : '<div class="new-card pending" style="animation-delay:1s"><span>🎤</span><div><b>Голосовое задание ждёт вас</b><br>Нажмите на урок на карте или откройте Тренажёр → «Из уроков»</div></div>'}
     </div>`;
     foot('<button class="btn" id="fin">Урок пройден</button>');
     sfx('win'); hap('success');
     FX.confetti(160);
     setTimeout(() => renderHeader('gems'), 300);
     $('#fin').onclick = () => { sfx('tap'); closeLesson(false); go('stories'); };
+  }
+
+  // Финал режима «только голосовое задание».
+  function finishVoiceOnly() {
+    const l = L.lesson;
+    const prev = S.completed[l.id] || { times: 1, perfect: false, voice: false };
+    const firstVoice = L.voiceDone && !prev.voice;
+    const gems = firstVoice ? 10 : (L.voiceDone || L.writtenDone) ? 3 : 0;
+    S.completed[l.id] = Object.assign({}, prev, { voice: !!prev.voice || L.voiceDone });
+    if (L.voiceDone) { S.stats.voice++; S.stats.speeches++; }
+    const grew = (L.voiceDone || L.writtenDone) ? markActiveDay() : false;
+    S.gems += gems;
+    save();
+    $('#l-prog').style.width = '100%';
+    const title = L.voiceDone ? 'Голосовое задание выполнено!' : L.writtenDone ? 'Письменное задание выполнено!' : 'Задание отложено';
+    $('#l-body').innerHTML = `<div class="victory">
+      <div class="big">${L.voiceDone ? '🎤' : L.writtenDone ? '✍️' : '⏳'}</div>
+      <h2>${title}</h2>
+      <p>${esc(l.title)} · приём «${esc(l.technique.name)}»</p>
+      <div class="reward-row" style="max-width:260px">
+        <div class="reward gems"><small>Харизма</small><div>+${gems} 💎</div></div>
+        <div class="reward fire"><small>Огонёк</small><div>🔥 ${streakNow()}</div></div>
+      </div>
+      ${voiceOk(l.id) ? '' : '<div class="new-card pending"><span>🎤</span><div><b>Голосовое задание ещё ждёт</b><br>Вернитесь, когда сможете говорить вслух</div></div>'}
+      ${grew ? '<div class="new-card" style="animation-delay:.6s"><span>🔥</span><div><b>Огонёк горит!</b><br>Сегодняшний день засчитан</div></div>' : ''}
+    </div>`;
+    foot('<button class="btn" id="fin">Готово</button>');
+    if (gems) { sfx('win'); hap('success'); FX.confetti(firstVoice ? 120 : 60); }
+    setTimeout(() => renderHeader('gems'), 300);
+    $('#fin').onclick = () => { sfx('tap'); closeLesson(false); render(); };
   }
 
   // ------------------------------------------------------------------ запись речи (общий компонент)
@@ -815,13 +909,15 @@
     if (!pitchTopic) pitchTopic = pick(window.GOVORUN_PITCH_TOPICS);
     v.innerHTML = `<div class="arena">
       <div class="seg">
-        <button class="seg-btn ${trainerMode === 'pitch' ? 'on' : ''}" data-m="pitch">🛗 Лифтовая презентация</button>
+        <button class="seg-btn ${trainerMode === 'pitch' ? 'on' : ''}" data-m="pitch">🛗 Лифт</button>
         <button class="seg-btn ${trainerMode === 'improv' ? 'on' : ''}" data-m="improv">🎲 Импровизация</button>
+        <button class="seg-btn ${trainerMode === 'lessons' ? 'on' : ''}" data-m="lessons">📚 Из уроков</button>
       </div>
       <div id="tr-body"></div>
     </div>`;
     $$('.seg-btn', v).forEach((b) => b.onclick = () => { stopAllRecording(); trainerMode = b.dataset.m; sfx('tap'); hap('light'); renderTrainer(v); });
-    if (trainerMode === 'pitch') renderPitch($('#tr-body', v)); else renderImprov($('#tr-body', v));
+    const tb = $('#tr-body', v);
+    if (trainerMode === 'pitch') renderPitch(tb); else if (trainerMode === 'improv') renderImprov(tb); else renderLessonVoices(tb);
   }
 
   function rewardSpeech(kind, a) {
@@ -836,6 +932,24 @@
     addGems(gems);
     if (grew) renderHeader('streak');
     return { gems, heart };
+  }
+
+  // Голосовые задания пройденных уроков: выполнить отложенные или повторить.
+  function renderLessonVoices(box) {
+    const done = LESSONS.map((l, i) => ({ l, i })).filter((x) => isDone(x.l.id));
+    const pending = done.filter((x) => !voiceOk(x.l.id));
+    const item = ({ l, i }) => `<button class="lv-item ${voiceOk(l.id) ? '' : 'pending'}" data-i="${i}">
+        <span class="lv-ico">${l.icon}</span>
+        <span class="lv-body"><b>${esc(l.title)}</b><small>${esc(l.technique.name)}</small></span>
+        <span class="lv-state">${voiceOk(l.id) ? '✓ ещё раз' : '🎤 ждёт'}</span>
+      </button>`;
+    box.innerHTML = `<div class="arena-hero"><div class="ico">📚</div>
+        <h2>Голосовые задания</h2>
+        <p>Выполните отложенные задания или повторите любое — без прохождения всего урока.</p></div>
+      ${!done.length ? '<div class="notice">Пройдите первый урок во вкладке «Истории» — его голосовое задание появится здесь.</div>' : ''}
+      ${pending.length ? `<div class="section-title">Ждут выполнения <small>${pending.length}</small></div><div class="lv-list">${pending.map(item).join('')}</div>` : ''}
+      ${done.length - pending.length ? `<div class="section-title">Выполненные <small>${done.length - pending.length}</small></div><div class="lv-list">${done.filter((x) => voiceOk(x.l.id)).map(item).join('')}</div>` : ''}`;
+    $$('.lv-item', box).forEach((b) => b.onclick = () => { sfx('tap'); hap('light'); openLesson(+b.dataset.i, 'voice'); });
   }
 
   function renderPitch(box) {
@@ -1037,7 +1151,9 @@
       ['🎲', 'Импровизатор', 'Пройти раунд импровизации', S.stats.improv >= 1],
       ['🔥', 'Три дня огня', 'Заниматься 3 дня подряд', S.bestStreak >= 3],
       ['📝', 'Архитектор речи', 'Собрать шпаргалку в Конструкторе', S.builder.step >= BSTEPS.length],
-      ['🏆', 'Мастер модуля', 'Пройти все 4 кейса', done >= LESSONS.length],
+      ['🏆', 'Мастер модуля', 'Пройти все кейсы первого модуля', MODULES[0].lessons.every((l) => isDone(l.id))],
+      ['🎤', 'Без долгов', 'Выполнить голосовые задания 10 уроков', LESSONS.filter((l) => voiceOk(l.id)).length >= 10],
+      ['👑', 'Златоуст', `Пройти все ${LESSONS.length} кейсов`, done >= LESSONS.length],
     ];
   }
 
