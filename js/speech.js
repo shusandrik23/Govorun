@@ -33,22 +33,30 @@
   // пока пользователь не нажал «стоп», а распознанное накапливаем.
   function nativeListener() {
     let active = false;
-    let committed = '';
-    let current = '';
+    let committed = ''; // фразы прошлых сессий распознавания
+    let current = '';   // текущая фраза (промежуточный или окончательный текст)
     let onText = null;
-    let onError = null;
     let handles = [];
     let restartTimer = null;
+    let lastResultAt = 0;
 
     const emit = () => onText && onText((committed + ' ' + current).trim());
+    const commit = () => { if (current) { committed = (committed + ' ' + current).trim(); current = ''; } };
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    // ВАЖНО: обещания плагина не всегда завершаются (stop() в плагине вообще не вызывает resolve),
+    // поэтому никогда не ждём их без ограничения по времени.
+    const settle = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), wait(ms)]);
 
     async function begin() {
       if (!active) return;
+      // Окончательный текст прошлой фразы приходит уже ПОСЛЕ события «stopped», поэтому сохраняем фразу
+      // только сейчас, перед новой сессией.
+      commit();
       try {
         await nativeSR.start({ language: 'ru-RU', maxResults: 1, partialResults: true, popup: false });
       } catch (e) {
         // «No match» и подобные ошибки после тишины — просто пробуем снова.
-        scheduleRestart(400);
+        scheduleRestart(500);
       }
     }
 
@@ -60,32 +68,34 @@
     return {
       async start(textCb, errCb) {
         onText = textCb;
-        onError = errCb;
         committed = '';
         current = '';
-        const ok = await ensurePermission();
+        const ok = await settle(ensurePermission(), 30000);
         if (!ok) { errCb && errCb('not-allowed'); return false; }
         active = true;
-        handles.push(await nativeSR.addListener('partialResults', (d) => {
-          current = (d.matches && d.matches[0]) || '';
+        const h1 = await settle(nativeSR.addListener('partialResults', (d) => {
+          current = (d.matches && d.matches[0]) || current;
+          lastResultAt = Date.now();
           emit();
-        }));
-        handles.push(await nativeSR.addListener('listeningState', (d) => {
-          if (d.status === 'stopped') {
-            if (current) { committed = (committed + ' ' + current).trim(); current = ''; }
-            emit();
-            scheduleRestart(250);
-          }
-        }));
+        }), 3000);
+        const h2 = await settle(nativeSR.addListener('listeningState', (d) => {
+          // Распознаватель сам останавливается после паузы — даём ему прислать окончательный текст и перезапускаем.
+          if (d.status === 'stopped') scheduleRestart(700);
+        }), 3000);
+        handles = [h1, h2].filter(Boolean);
         begin();
         return true;
       },
       async stop() {
         active = false;
         clearTimeout(restartTimer);
-        try { await nativeSR.stop(); } catch (e) { /* уже остановлен */ }
-        if (current) { committed = (committed + ' ' + current).trim(); current = ''; }
-        handles.forEach((h) => { try { h.remove(); } catch (e) { /* ок */ } });
+        const stoppedAt = Date.now();
+        try { nativeSR.stop().catch(() => {}); } catch (e) { /* уже остановлен */ }
+        // Ждём окончательный текст последней фразы (не дольше 0,8 с).
+        await wait(500);
+        if (lastResultAt > stoppedAt - 300) await wait(300);
+        commit();
+        handles.forEach((h) => { try { const r = h.remove(); if (r && r.catch) r.catch(() => {}); } catch (e) { /* ок */ } });
         handles = [];
         return committed;
       },

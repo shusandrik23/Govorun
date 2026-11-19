@@ -809,78 +809,152 @@
   let activeRec = null;
   function stopAllRecording() { if (activeRec) activeRec.cancel(); }
 
-  // Кнопка микрофона с кольцом-таймером, живой расшифровкой и запасным режимом без распознавания.
+  // Кнопка микрофона с кольцом-таймером, кнопками «Пауза» и «Завершить», живой расшифровкой
+  // и запасным режимом без распознавания. Время на паузе не тратится и не учитывается в темпе.
   function mountRecorder(zone, opts) {
     const R = 54, C = 2 * Math.PI * R;
-    let state = 'idle', listener = null, started = 0, timer = null, text = '', noSpeech = !Speech.supported;
+    let state = 'idle'; // idle → rec ⇄ paused → done
+    let listener = null, timer = null, noSpeech = !Speech.supported;
+    let text = '', baseText = '';     // весь текст и текст до последней паузы
+    let spent = 0, segStart = 0;      // секунды до паузы и начало текущего отрезка записи
+    let busy = false;                 // идёт переключение — двойные нажатия игнорируем
     zone.innerHTML = `<div class="mic-zone">
         <div class="mic-ring"><svg viewBox="0 0 120 120"><circle class="bg" cx="60" cy="60" r="${R}"/><circle class="fg" cx="60" cy="60" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg>
           <button class="mic-btn" aria-label="Говорить">🎤</button></div>
         <div class="mic-time">${fmtTime(opts.seconds)}</div>
         <div class="mic-hint">${noSpeech ? 'Распознавание речи недоступно — можно говорить вслух по таймеру' : 'Нажмите и говорите'}</div>
+        <div class="rec-controls hidden">
+          <button class="rc-btn rc-pause">⏸ Пауза</button>
+          <button class="rc-btn rc-finish">✓ Завершить</button>
+        </div>
       </div>
       <div class="live"></div>
       <div class="rec-result"></div>`;
-    const btn = $('.mic-btn', zone), fg = $('.fg', zone), time = $('.mic-time', zone), hint = $('.mic-hint', zone), live = $('.live', zone), out = $('.rec-result', zone);
-
-    const self = {
-      cancel() { clearInterval(timer); if (listener) listener.stop(); listener = null; state = 'idle'; if (activeRec === self) activeRec = null; },
+    const btn = $('.mic-btn', zone), fg = $('.fg', zone), time = $('.mic-time', zone), hint = $('.mic-hint', zone);
+    const live = $('.live', zone), out = $('.rec-result', zone);
+    const controls = $('.rec-controls', zone), pauseBtn = $('.rc-pause', zone), finishBtn = $('.rc-finish', zone);
+    const elapsed = () => spent + (state === 'rec' ? (Date.now() - segStart) / 1000 : 0);
+    const join = (a, b) => [a, b].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    // Обещания распознавателя могут не завершиться — ждём не дольше 3 секунд.
+    const stopListener = async () => {
+      if (!listener) return '';
+      const l = listener; listener = null;
+      return Promise.race([l.stop().catch(() => ''), new Promise((r) => setTimeout(() => r(''), 3000))]);
     };
 
-    function draw(left) {
+    const self = {
+      cancel() { clearInterval(timer); if (listener) { const l = listener; listener = null; l.stop().catch(() => {}); } state = 'idle'; if (activeRec === self) activeRec = null; },
+      pause() { if (state === 'rec') pause(); },
+    };
+
+    function draw() {
+      const left = Math.max(0, opts.seconds - elapsed());
       fg.style.strokeDashoffset = String(C * (1 - left / opts.seconds));
       time.textContent = fmtTime(left);
+      return left;
     }
     function showLive() {
+      const paused = state === 'paused';
       live.innerHTML = noSpeech
-        ? '<div class="transcript empty">Говорите вслух — таймер идёт</div>'
-        : `<div class="wave"><i></i><i></i><i></i><i></i><i></i></div><div class="transcript ${text ? '' : 'empty'}">${text ? esc(text) : 'Слушаю…'}</div>`;
+        ? `<div class="transcript empty">${paused ? 'Пауза — таймер остановлен' : 'Говорите вслух — таймер идёт'}</div>`
+        : `${paused ? '<div class="paused-label">⏸ Пауза — запись остановлена</div>' : '<div class="wave"><i></i><i></i><i></i><i></i><i></i></div>'}<div class="transcript ${text ? '' : 'empty'}">${text ? esc(text) : 'Слушаю…'}</div>`;
+    }
+    function setUI() {
+      const rec = state === 'rec', paused = state === 'paused';
+      btn.classList.toggle('rec', rec);
+      btn.classList.toggle('paused', paused);
+      btn.textContent = rec ? '⏸' : paused ? '▶' : state === 'done' ? '🔁' : '🎤';
+      controls.classList.toggle('hidden', !(rec || paused));
+      pauseBtn.textContent = paused ? '▶ Продолжить' : '⏸ Пауза';
+      hint.textContent = rec ? 'Говорите! Пауза — если нужно подумать' : paused ? 'Таймер стоит. Продолжите, когда будете готовы' : state === 'done' ? 'Нажмите, чтобы попробовать ещё раз' : hint.textContent;
     }
 
-    async function start() {
-      FX.unlock();
-      stopAllRecording();
-      activeRec = self;
-      text = ''; out.innerHTML = '';
-      state = 'rec';
-      btn.classList.add('rec'); btn.textContent = '⏹';
-      hint.textContent = 'Нажмите, чтобы закончить';
-      sfx('start'); hap('light');
-      if (opts.onStart) opts.onStart();
-      if (!noSpeech) {
-        listener = Speech.create();
-        const ok = await listener.start((t) => { text = t; showLive(); if (opts.onText) opts.onText(t, (Date.now() - started) / 1000); }, (err) => {
-          noSpeech = true; listener = null;
-          toast(err === 'not-allowed' ? 'Нет доступа к микрофону — разрешите его в настройках' : 'Распознавание недоступно — говорите по таймеру');
-          showLive();
-        });
-        if (!ok) { noSpeech = true; listener = null; }
-      }
-      started = Date.now();
-      showLive();
-      draw(opts.seconds);
+    async function listen() {
+      if (noSpeech) return;
+      listener = Speech.create();
+      const ok = await listener.start((t) => {
+        if (state !== 'rec') return;
+        text = join(baseText, t);
+        showLive();
+        if (opts.onText) opts.onText(text, elapsed());
+      }, (err) => {
+        noSpeech = true; listener = null;
+        toast(err === 'not-allowed' ? 'Нет доступа к микрофону — разрешите его в настройках' : 'Распознавание недоступно — говорите по таймеру');
+        showLive();
+      });
+      if (!ok) { noSpeech = true; listener = null; }
+    }
+
+    function tick() {
+      clearInterval(timer);
       timer = setInterval(() => {
-        const left = opts.seconds - (Date.now() - started) / 1000;
-        draw(left);
-        if (opts.onTick) opts.onTick((Date.now() - started) / 1000);
-        if (left <= 0) stop();
+        const left = draw();
+        if (opts.onTick) opts.onTick(elapsed());
+        if (left <= 0) finish();
       }, 200);
     }
 
-    async function stop() {
-      if (state !== 'rec') return;
+    async function start() {
+      if (busy) return;
+      busy = true;
+      FX.unlock();
+      stopAllRecording();
+      activeRec = self;
+      text = ''; baseText = ''; spent = 0; out.innerHTML = '';
+      state = 'rec';
+      setUI();
+      sfx('start'); hap('light');
+      if (opts.onStart) opts.onStart();
+      await listen();
+      segStart = Date.now();
+      showLive(); draw(); tick();
+      busy = false;
+    }
+
+    async function pause() {
+      if (busy || state !== 'rec') return;
+      busy = true;
+      spent = elapsed();
+      state = 'paused';
+      clearInterval(timer);
+      setUI(); sfx('tap'); hap('light');
+      const t = await stopListener();
+      if (t) text = join(baseText, t);
+      baseText = text;
+      showLive(); draw();
+      busy = false;
+    }
+
+    async function resume() {
+      if (busy || state !== 'paused') return;
+      busy = true;
+      state = 'rec';
+      setUI(); sfx('start'); hap('light');
+      await listen();
+      segStart = Date.now();
+      showLive(); tick();
+      busy = false;
+    }
+
+    async function finish() {
+      if (state !== 'rec' && state !== 'paused') return;
+      const wasRec = state === 'rec';
+      const secs = Math.min(opts.seconds, elapsed());
+      spent = secs;
       state = 'done';
       clearInterval(timer);
-      const secs = Math.min(opts.seconds, (Date.now() - started) / 1000);
-      if (listener) { const final = await listener.stop(); if (final && final.length >= text.length) text = final; listener = null; }
+      controls.classList.add('hidden');
+      hint.textContent = 'Обрабатываю…';
+      if (wasRec) {
+        const t = await stopListener();
+        if (t) text = join(baseText, t);
+      }
       activeRec = null;
-      btn.classList.remove('rec'); btn.textContent = '🔁';
-      hint.textContent = 'Нажмите, чтобы попробовать ещё раз';
-      draw(0);
+      setUI();
       live.innerHTML = '';
       if (opts.onStop) opts.onStop();
       if (noSpeech) {
-        out.innerHTML = `<div class="notice">Без распознавания я не слышу слова, но таймер вы выдержали. Получилось сказать вслух?</div>
+        out.innerHTML = `<div class="notice">Без распознавания я не слышу слова, но вы выступили. Получилось сказать вслух?</div>
           <button class="btn" data-yes style="margin-top:12px">Да, получилось!</button>`;
         $('[data-yes]', out).onclick = () => {
           const r = opts.onDone('', secs, true);
@@ -894,8 +968,10 @@
       setTimeout(() => out.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     }
 
-    btn.onclick = () => (state === 'rec' ? stop() : start());
-    draw(opts.seconds);
+    btn.onclick = () => (state === 'rec' ? pause() : state === 'paused' ? resume() : start());
+    pauseBtn.onclick = () => (state === 'rec' ? pause() : resume());
+    finishBtn.onclick = () => { sfx('tap'); hap('success'); finish(); };
+    draw();
     if (Speech.supported) Speech.checkAvailable().then((ok) => { if (!ok) { noSpeech = true; hint.textContent = 'Распознавание речи недоступно — можно говорить вслух по таймеру'; } });
     return self;
   }
@@ -1237,7 +1313,7 @@
     $('#me-btn').onclick = openProfile;
     document.addEventListener('pointerdown', () => FX.unlock(), { once: true });
     setInterval(() => renderHeader(), 60000);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) stopAllRecording(); else renderHeader(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { if (activeRec) activeRec.pause(); } else renderHeader(); });
 
     // Кнопка «Назад» на Android: лист → урок → профиль → вкладка «Истории» → выход.
     if (NativeApp) {

@@ -501,3 +501,11 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .lv-body small { color: var(--muted); font-size: 13px; font-weight: 800; }
 .lv-state { font-size: 13px; font-weight: 900; color: var(--blue); white-space: nowrap; }
 .lv-item:not(.pending) .lv-state { color: var(--green-d); }
+
+/* ---------- Кнопки «Пауза» и «Завершить» во время записи ---------- */
+.mic-btn.paused { background: var(--orange); box-shadow: 0 6px 0 #E08600; }
+.rec-controls { display: flex; gap: 10px; margin-top: 14px; width: 100%; max-width: 360px; }
+.rc-btn { flex: 1; padding: 13px 8px; border-radius: 14px; font-size: 15px; font-weight: 900; text-transform: uppercase; letter-spacing: .5px; border: 2px solid var(--gray); box-shadow: 0 4px 0 var(--gray); color: var(--muted); background: #fff; transition: transform .08s, box-shadow .08s; }
+.rc-btn:active { transform: translateY(4px); box-shadow: none; }
+.rc-finish { background: var(--green); border-color: var(--green); color: #fff; box-shadow: 0 4px 0 var(--green-d); }
+.paused-label { text-align: center; color: var(--orange); font-weight: 900; font-size: 14px; margin-top: 8px; }
