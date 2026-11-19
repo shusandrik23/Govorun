@@ -46,8 +46,10 @@
     completed: {}, // id урока → { times, perfect }
     gems: 0, hearts: MAX_HEARTS, heartsTs: Date.now(),
     streak: 0, bestStreak: 0, lastDay: null, days: [],
-    stats: { lessons: 0, perfect: 0, voice: 0, pitches: 0, improv: 0, bestWpm: 0, speeches: 0 },
+    stats: { lessons: 0, perfect: 0, voice: 0, pitches: 0, improv: 0, bestWpm: 0, speeches: 0, reviews: 0 },
     builder: { step: 0, answers: {} },
+    history: [],  // записи речи: { d: день, t: время, k: вид, w: слов, wpm, f: паразитов, s: секунд, fl: {слово: n} }
+    mistakes: {}, // ошибки для повторения: 'idУрока:quiz|builder' → время ошибки
     sound: true,
     created: Date.now(),
   });
@@ -107,6 +109,30 @@
   function nextRank() { return RANKS.find((x) => x[0] > S.gems) || null; }
   const isDone = (id) => !!S.completed[id];
   const voiceOk = (id) => !!(S.completed[id] && S.completed[id].voice);
+
+  // История записей речи — для графиков прогресса.
+  function recordSpeech(kind, a, secs) {
+    if (!a || a.words < 4 || !secs || secs < 5) return;
+    S.history.push({ d: dayKey(), t: Date.now(), k: kind, w: a.words, wpm: a.wpm, f: a.fillerTotal, s: Math.round(secs), fl: a.fillers });
+    if (S.history.length > 400) S.history = S.history.slice(-400);
+    save();
+  }
+
+  // Ошибки в тестах и сборке фраз попадают в «Работу над ошибками».
+  const mistakeKeys = () => Object.keys(S.mistakes || {}).filter((k) => LESSONS.some((l) => l.id === k.split(':')[0]));
+  function addMistake(id, kind) { S.mistakes[`${id}:${kind}`] = Date.now(); save(); }
+  function clearMistake(id, kind) { delete S.mistakes[`${id}:${kind}`]; save(); }
+  function buildReviewItems() {
+    const items = mistakeKeys().sort((a, b) => S.mistakes[a] - S.mistakes[b]).slice(0, 6).map((k) => {
+      const [id, kind] = k.split(':');
+      return { lesson: LESSONS.find((l) => l.id === id), kind, fromMistake: true };
+    });
+    // Если ошибок мало — добавляем случайные упражнения из пройденных уроков.
+    const pool = shuffle(LESSONS.filter((l) => isDone(l.id)).flatMap((l) => [{ lesson: l, kind: 'quiz' }, { lesson: l, kind: 'builder' }]))
+      .filter((x) => !items.some((y) => y.lesson === x.lesson && y.kind === x.kind));
+    while (items.length < 4 && pool.length) items.push(pool.shift());
+    return items;
+  }
   const currentIndex = () => { const i = LESSONS.findIndex((l) => !isDone(l.id)); return i === -1 ? LESSONS.length : i; };
 
   // ------------------------------------------------------------------ анализ речи (на телефоне)
@@ -342,12 +368,15 @@
       <p>${S.hearts === 0 ? 'Ошибки — часть обучения. Восстановите сердечки или потренируйтесь в Тренажёре.' : 'За ошибку в тесте или сборке фразы сгорает одно сердечко.'}
       ${S.hearts < MAX_HEARTS ? `<br>Следующее восстановится через ${left} мин.` : ''}</p>
       ${S.hearts < MAX_HEARTS ? `<button class="btn blue" data-refill ${S.gems < REFILL_COST ? 'disabled' : ''}>Восстановить все за ${REFILL_COST} 💎</button>
+      ${Object.keys(S.completed).length ? '<button class="btn ghost" data-review>🏋️ Работа над ошибками: +1 ❤️</button>' : ''}
       <button class="btn ghost" data-train>Тренажёр: +1 ❤️ за речь</button>` : ''}
       <button class="btn link" data-close>${opts.inLesson ? 'Выйти из урока' : 'Закрыть'}</button>`, (s) => {
       const r = $('[data-refill]', s);
       if (r) r.onclick = () => { S.gems -= REFILL_COST; S.hearts = MAX_HEARTS; S.heartsTs = Date.now(); save(); renderHeader('hearts'); sfx('heart'); hap('success'); closeSheet(); toast('Сердечки восстановлены ❤️'); if (opts.onRefill) opts.onRefill(); };
       const t = $('[data-train]', s);
       if (t) t.onclick = () => { closeSheet(); if (opts.inLesson) closeLesson(true); go('trainer'); };
+      const rv = $('[data-review]', s);
+      if (rv) rv.onclick = () => { closeSheet(); if (opts.inLesson) closeLesson(true); openLesson(0, 'review'); };
       $('[data-close]', s).onclick = () => { closeSheet(); if (opts.inLesson) closeLesson(true); };
     });
   }
@@ -375,7 +404,12 @@
           <span class="ch-ico">${r[2]}</span>
           <span class="ch-body"><b>Шкала харизмы · ${esc(r[1])}</b><span class="lvl-bar"><i style="width:${pct}%"></i></span></span>
           <span class="ch-val">${S.gems} 💎</span>
-        </button>` : ''}
+        </button>
+        ${Object.keys(S.completed).length ? `<button class="review-bar" id="review-btn">
+          <span class="ch-ico">🏋️</span>
+          <span class="ch-body"><b>Работа над ошибками</b><small>${mistakeKeys().length ? `${mistakeKeys().length} ${plural(mistakeKeys().length, 'упражнение ждёт', 'упражнения ждут', 'упражнений ждут')} повторения` : 'Повторите пройденное'} · +1 ❤️</small></span>
+          ${mistakeKeys().length ? `<span class="rv-count">${mistakeKeys().length}</span>` : '<span class="rv-go">›</span>'}
+        </button>` : ''}` : ''}
         <div class="snake">`;
       m.lessons.forEach((l, i) => {
         const gi = LESSONS.indexOf(l);
@@ -409,6 +443,8 @@
       lessonIntroSheet(l, i);
     }));
     $('#charisma-btn', v).onclick = gemsSheet;
+    const rb = $('#review-btn', v);
+    if (rb) rb.onclick = () => { sfx('tap'); hap('light'); openLesson(0, 'review'); };
   }
 
   function lessonIntroSheet(l, i) {
@@ -435,8 +471,14 @@
     refreshHearts();
     if (mode === 'full' && S.hearts <= 0) { heartsSheet(); return; }
     FX.unlock();
-    const lesson = LESSONS[i];
-    L = { i, lesson, mode, steps: mode === 'voice' ? ['voice'] : STEPS, step: 0, mistakes: 0, voiceDone: false, writtenDone: false, writtenText: '', seen: new Set(), quiz: { sel: null, wrong: new Set() }, b: null, rec: null };
+    let items = null;
+    if (mode === 'review') {
+      items = buildReviewItems();
+      if (!items.length) { toast('Пройдите хотя бы один урок 📚'); return; }
+    }
+    const lesson = items ? items[0].lesson : LESSONS[i];
+    const steps = mode === 'voice' ? ['voice'] : mode === 'review' ? items.map((x) => x.kind) : STEPS;
+    L = { i, lesson, mode, items, steps, step: 0, prep: -1, mastered: 0, itemFailed: false, mistakes: 0, voiceDone: false, writtenDone: false, writtenText: '', seen: new Set(), quiz: { sel: null, wrong: new Set() }, b: null, rec: null };
     const el = $('#lesson');
     el.classList.remove('hidden');
     el.innerHTML = `<div class="lesson-inner">
@@ -506,12 +548,35 @@
     const body = $('#l-body');
     body.scrollTop = 0;
     const s = L.steps[L.step];
+    if (L.mode === 'review' && L.prep !== L.step) {
+      // Новое упражнение повторения: свой урок и чистое состояние.
+      L.prep = L.step;
+      L.lesson = L.items[L.step].lesson;
+      L.quiz = { sel: null, wrong: new Set() };
+      L.b = null;
+      L.itemFailed = false;
+    }
     ({ story: stepStory, xray: stepXray, anti: stepAnti, quiz: stepQuiz, builder: stepBuilder, voice: stepVoice })[s](body);
   }
 
   const kicker = (n, t) => (L.mode === 'voice'
     ? `<div class="step-kicker">${t} · ${esc(L.lesson.title)}</div>`
-    : `<div class="step-kicker">Шаг ${n} из ${STEPS.length} · ${t}</div>`);
+    : L.mode === 'review'
+      ? `<div class="step-kicker">🏋️ Работа над ошибками · ${L.step + 1} из ${L.steps.length} · ${esc(L.lesson.title)}</div>`
+      : `<div class="step-kicker">Шаг ${n} из ${STEPS.length} · ${t}</div>`);
+
+  // Ошибка: в уроке — минус сердечко и запись в «Работу над ошибками»; в повторении — без потери сердечка.
+  function onMistake(kind) {
+    L.mistakes++;
+    if (L.mode === 'review') { L.itemFailed = true; addMistake(L.lesson.id, kind); return; }
+    addMistake(L.lesson.id, kind);
+    loseHeart();
+  }
+  // Верный ответ в повторении с первой попытки — упражнение усвоено.
+  function onCorrect(kind) {
+    if (L.mode === 'review' && !L.itemFailed) { if (S.mistakes[`${L.lesson.id}:${kind}`]) L.mastered++; clearMistake(L.lesson.id, kind); }
+  }
+  const canRetry = () => L.mode === 'review' || S.hearts > 0;
 
   // Шаг 1. История
   function stepStory(body) {
@@ -598,17 +663,17 @@
       $$('.option', body).forEach((x) => { x.disabled = true; });
       if (opt.correct) {
         btn.classList.add('right');
+        onCorrect('quiz');
         sfx('correct'); hap('success');
         showFeedback(true, pick(['Отлично!', 'В точку!', 'Превосходно!']), opt.explain, pick(['Кр-р-расота! Так говорят настоящие ораторы.', 'Вот это я понимаю — харизма!', 'Браво! Зал бы аплодировал стоя.']), 'Продолжить', nextStep);
       } else {
         btn.classList.add('wrong');
-        L.mistakes++;
         L.quiz.wrong.add(L.quiz.sel);
-        loseHeart(); setProgress();
+        onMistake('quiz'); setProgress();
         sfx('wrong'); hap('error');
         const lh = $('#l-hearts'); lh.classList.remove('shake'); void lh.offsetWidth; lh.classList.add('shake');
-        showFeedback(false, 'Не совсем…', opt.explain, pick(['Кр-р-р! Даже Цицерон ошибался. Попробуй ещё раз!', 'Почти! Подумай, что почувствует зал.', 'Ошибка — лучший учитель. Давай ещё раз!']), S.hearts > 0 ? 'Попробовать снова' : 'Понятно', () => {
-          if (S.hearts <= 0) heartsSheet({ inLesson: true, onRefill: renderStep });
+        showFeedback(false, 'Не совсем…', opt.explain, pick(['Кр-р-р! Даже Цицерон ошибался. Попробуй ещё раз!', 'Почти! Подумай, что почувствует зал.', 'Ошибка — лучший учитель. Давай ещё раз!']), canRetry() ? 'Попробовать снова' : 'Понятно', () => {
+          if (!canRetry()) heartsSheet({ inLesson: true, onRefill: renderStep });
           else renderStep();
         });
       }
@@ -643,16 +708,16 @@
       $$('.tile', body).forEach((t) => { t.style.pointerEvents = 'none'; });
       if (got === want) {
         area.classList.add('right');
+        onCorrect('builder');
         sfx('correct'); hap('success');
         showFeedback(true, 'Сильная фраза!', want, pick(['Такую фразу хочется записать!', 'Кр-р-р, звучит как цитата великого оратора!']), 'Продолжить', nextStep);
       } else {
         area.classList.add('wrong');
-        L.mistakes++;
-        loseHeart(); setProgress();
+        onMistake('builder'); setProgress();
         sfx('wrong'); hap('error');
-        showFeedback(false, 'Правильный ответ:', want, 'Порядок слов решает! Попробуй собрать ещё раз.', S.hearts > 0 ? 'Собрать заново' : 'Понятно', () => {
+        showFeedback(false, 'Правильный ответ:', want, 'Порядок слов решает! Попробуй собрать ещё раз.', canRetry() ? 'Собрать заново' : 'Понятно', () => {
           L.b.placed = [];
-          if (S.hearts <= 0) heartsSheet({ inLesson: true, onRefill: renderStep });
+          if (!canRetry()) heartsSheet({ inLesson: true, onRefill: renderStep });
           else renderStep();
         });
       }
@@ -678,7 +743,7 @@
         const a = analyzeSpeech(text, secs);
         const bonusHit = checkBonus(v.bonus, a);
         const ok = a.words >= 4;
-        if (ok) { L.voiceDone = true; $('#go').disabled = false; sfx('correct'); hap('success'); } else { hap('error'); }
+        if (ok) { L.voiceDone = true; $('#go').disabled = false; sfx('correct'); hap('success'); recordSpeech('lesson', a, secs); } else { hap('error'); }
         const extra = v.bonus ? `<div class="card full ${bonusHit ? 'hit' : ''}"><b>${bonusHit ? '✅' : '➖'}</b><small>${esc(v.bonus.label)}${bonusHit ? ' — получилось' : ' — пока не услышал'}</small></div>` : '';
         return {
           html: (ok ? '' : '<div class="notice">Слишком коротко — скажите хотя бы одно-два предложения.</div>') + speechReportHTML(a, 'lesson', { extra }),
@@ -737,6 +802,7 @@
 
   function finishLesson() {
     if (L.mode === 'voice') return finishVoiceOnly();
+    if (L.mode === 'review') return finishReview();
     const l = L.lesson;
     const first = !isDone(l.id);
     const perfect = L.mistakes === 0;
@@ -773,6 +839,35 @@
     FX.confetti(160);
     setTimeout(() => renderHeader('gems'), 300);
     $('#fin').onclick = () => { sfx('tap'); closeLesson(false); go('stories'); };
+  }
+
+  // Финал «Работы над ошибками»: сердечко, очки и сколько упражнений усвоено.
+  function finishReview() {
+    const gems = 5 + L.mastered * 2;
+    S.stats.reviews = (S.stats.reviews || 0) + 1;
+    const heart = addHeart();
+    const grew = markActiveDay();
+    S.gems += gems;
+    save();
+    setProgress();
+    $('#l-prog').style.width = '100%';
+    const left = mistakeKeys().length;
+    $('#l-body').innerHTML = `<div class="victory">
+      <div class="big">🏋️</div>
+      <h2>Тренировка завершена!</h2>
+      <p>${L.mastered ? `Усвоено ${L.mastered} ${plural(L.mastered, 'упражнение', 'упражнения', 'упражнений')} из списка ошибок` : 'Отличная разминка для памяти'}</p>
+      <div class="reward-row">
+        <div class="reward gems"><small>Харизма</small><div>+${gems} 💎</div></div>
+        <div class="reward fire"><small>Сердечко</small><div>${heart ? '+1 ❤️' : '❤️ 5/5'}</div></div>
+        <div class="reward acc"><small>Ошибок</small><div>${left}</div></div>
+      </div>
+      ${left ? `<div class="new-card pending"><span>🏋️</span><div><b>Ещё ${left} ${plural(left, 'упражнение ждёт', 'упражнения ждут', 'упражнений ждут')}</b><br>Ошибки остаются в списке, пока вы не ответите верно с первой попытки</div></div>` : '<div class="new-card"><span>🎉</span><div><b>Список ошибок пуст!</b><br>Новые появятся, если ошибётесь в уроках</div></div>'}
+      ${grew ? '<div class="new-card" style="animation-delay:.6s"><span>🔥</span><div><b>Огонёк горит!</b><br>Сегодняшний день засчитан</div></div>' : ''}
+    </div>`;
+    foot('<button class="btn" id="fin">Готово</button>');
+    sfx('win'); hap('success'); FX.confetti(90);
+    setTimeout(() => renderHeader('gems'), 300);
+    $('#fin').onclick = () => { sfx('tap'); closeLesson(false); render(); };
   }
 
   // Финал режима «только голосовое задание».
@@ -996,7 +1091,8 @@
     if (trainerMode === 'pitch') renderPitch(tb); else if (trainerMode === 'improv') renderImprov(tb); else renderLessonVoices(tb);
   }
 
-  function rewardSpeech(kind, a) {
+  function rewardSpeech(kind, a, secs) {
+    recordSpeech(kind, a, secs);
     let gems = 5;
     if (a.words >= 30) gems += 5;
     if (a.words >= 10 && a.fillerTotal === 0) gems += 5;
@@ -1050,7 +1146,7 @@
           const r = rewardSpeech('pitches', { words: 0, fillerTotal: 1, wpm: 0 });
           return { html: `<div class="verdict card"><b>🎉 +${r.gems} 💎${r.heart ? ' · +1 ❤️' : ''}</b><p>Речь засчитана! Для подсчёта темпа и слов-паразитов нужен микрофон.</p></div>` };
         }
-        const r = a.words >= 4 ? rewardSpeech('pitches', a) : null;
+        const r = a.words >= 4 ? rewardSpeech('pitches', a, secs) : null;
         return {
           html: (r ? `<div class="reward-strip">🎉 +${r.gems} 💎${r.heart ? ' · +1 ❤️' : ''}</div>` : '<div class="notice">Слишком коротко — попробуйте сказать хотя бы пару предложений.</div>') +
             speechReportHTML(a, 'pitch', { extra: `<div class="card"><b>${a.words}</b><small>${plural(a.words, 'слово', 'слова', 'слов')}</small></div><div class="card"><b>${Math.round(secs)} с</b><small>длительность</small></div>` }),
@@ -1111,7 +1207,7 @@
           const r = rewardSpeech('improv', { words: 0, fillerTotal: 1, wpm: 0 });
           return { html: `<div class="verdict card"><b>🎉 +${r.gems} 💎${r.heart ? ' · +1 ❤️' : ''}</b><p>Раунд засчитан! Чтобы считать вплетённые слова и темп, нужен микрофон.</p></div>` };
         }
-        const r = a.words >= 4 ? rewardSpeech('improv', a) : null;
+        const r = a.words >= 4 ? rewardSpeech('improv', a, secs) : null;
         if (r && improv.hits.size) addGems(improv.hits.size * 2);
         return {
           html: (r ? `<div class="reward-strip">🎉 +${r.gems + improv.hits.size * 2} 💎${r.heart ? ' · +1 ❤️' : ''}</div>` : '<div class="notice">Слишком коротко — попробуйте рассказать историю подлиннее.</div>') +
@@ -1215,6 +1311,104 @@
     if (await copyText(t)) toast('Поделиться нельзя — текст скопирован 📋');
   }
 
+  // ------------------------------------------------------------------ графики прогресса
+  const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+  const fmtDay = (d) => { const [, m, dd] = d.split('-'); return `${+dd} ${MONTHS[+m - 1]}`; };
+
+  // Средние значения по дням: темп и слова-паразиты в минуту.
+  function dailyStats() {
+    const by = {};
+    S.history.forEach((h) => {
+      const x = (by[h.d] = by[h.d] || { d: h.d, n: 0, wpm: 0, words: 0, f: 0, s: 0 });
+      x.n++; x.wpm += h.wpm || 0; x.words += h.w; x.f += h.f; x.s += h.s;
+    });
+    return Object.values(by).sort((a, b) => (a.d < b.d ? -1 : 1)).map((x) => ({
+      d: x.d, n: x.n,
+      wpm: Math.round(x.words / (x.s / 60)),
+      fpm: Math.round((x.f / (x.s / 60)) * 10) / 10,
+    }));
+  }
+
+  // Линейный график одной величины (одна серия — без легенды, её называет заголовок).
+  function lineChart(id, pts, key, opts) {
+    const W = 320, H = 150, L0 = 34, R0 = 10, T0 = 12, B0 = 24;
+    const vals = pts.map((p) => p[key]);
+    let max = Math.max(...vals, opts.minMax || 1);
+    if (opts.band) max = Math.max(max, opts.band[1] + 20);
+    max = Math.ceil(max / opts.step) * opts.step;
+    const x = (i) => (pts.length === 1 ? (L0 + W - R0) / 2 : L0 + (i * (W - L0 - R0)) / (pts.length - 1));
+    const y = (v) => T0 + (H - T0 - B0) * (1 - v / max);
+    const grid = [0, max / 2, max].map((g) => `<line x1="${L0}" x2="${W - R0}" y1="${y(g)}" y2="${y(g)}" class="ch-grid"/><text x="${L0 - 6}" y="${y(g) + 4}" class="ch-ax" text-anchor="end">${Math.round(g * 10) / 10}</text>`).join('');
+    const band = opts.band ? `<rect x="${L0}" width="${W - L0 - R0}" y="${y(opts.band[1])}" height="${y(opts.band[0]) - y(opts.band[1])}" class="ch-band"/>` : '';
+    const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(' ');
+    const labelIdx = [...new Set([0, Math.floor((pts.length - 1) / 2), pts.length - 1])];
+    const xl = labelIdx.map((i) => `<text x="${x(i)}" y="${H - 6}" class="ch-ax" text-anchor="${pts.length === 1 ? 'middle' : i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}">${fmtDay(pts[i].d)}</text>`).join('');
+    const dots = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p[key])}" r="4.5" class="ch-dot" style="fill:${opts.color}"/>`).join('');
+    const hits = pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p[key])}" r="16" class="ch-hit" data-i="${i}"/>`).join('');
+    return `<div class="chart-card" id="${id}" data-key="${key}" data-unit="${esc(opts.unit)}">
+      <div class="chart-title">${opts.title}</div>
+      ${opts.bandLabel ? `<div class="chart-sub"><i class="band-key"></i>${opts.bandLabel}</div>` : ''}
+      <div class="chart-tip">Нажмите на точку, чтобы увидеть значение</div>
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.title)}">${band}${grid}
+        ${pts.length > 1 ? `<path d="${path}" class="ch-line" style="stroke:${opts.color}"/>` : ''}${dots}${xl}${hits}</svg>
+    </div>`;
+  }
+
+  function progressHTML() {
+    const days = dailyStats();
+    const recent = (from, to) => {
+      const cut = (n) => dayKey(new Date(Date.now() - n * 86400000));
+      const xs = S.history.filter((h) => h.d > cut(from) && h.d <= cut(to));
+      const secs = xs.reduce((a, h) => a + h.s, 0);
+      if (!xs.length || !secs) return null;
+      return { wpm: Math.round(xs.reduce((a, h) => a + h.w, 0) / (secs / 60)), fpm: Math.round((xs.reduce((a, h) => a + h.f, 0) / (secs / 60)) * 10) / 10 };
+    };
+    const now = recent(7, 0), before = recent(14, 7);
+    const delta = (a, b, lowerBetter, unit) => {
+      if (a == null || b == null) return '<small class="dl">нет данных за прошлую неделю</small>';
+      const d = Math.round((a - b) * 10) / 10;
+      if (!d) return '<small class="dl">как на прошлой неделе</small>';
+      const good = lowerBetter ? d < 0 : null;
+      return `<small class="dl ${good === true ? 'up' : good === false ? 'down' : ''}">${d > 0 ? '▲' : '▼'} ${Math.abs(d)} ${unit} к прошлой неделе</small>`;
+    };
+    const fl = {};
+    S.history.forEach((h) => Object.entries(h.fl || {}).forEach(([w, n]) => { fl[w] = (fl[w] || 0) + n; }));
+    const topFl = Object.entries(fl).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const last = days.slice(-14);
+    let html = `<div class="section-title">Мой прогресс <small>${S.history.length} ${plural(S.history.length, 'запись', 'записи', 'записей')}</small></div>`;
+    if (!S.history.length) {
+      return html + '<div class="notice">Здесь появятся графики темпа и слов-паразитов. Запишите речь в уроке или в Тренажёре 🎤</div>';
+    }
+    html += `<div class="stats-grid">
+        <div class="stat-card"><span>⚡</span><div><b>${now ? now.wpm : '—'}</b><small>слов/мин за 7 дней</small>${now ? delta(now.wpm, before && before.wpm, false, 'сл/мин') : ''}</div></div>
+        <div class="stat-card"><span>🧹</span><div><b>${now ? now.fpm : '—'}</b><small>паразитов в минуту</small>${now ? delta(now.fpm, before && before.fpm, true, '') : ''}</div></div>
+      </div>`;
+    if (last.length < 2) {
+      html += `<div class="notice" style="margin-top:12px">Графики появятся, когда будут записи хотя бы за 2 разных дня. Сейчас — ${last.length}. Возвращайтесь завтра! 🔥</div>`;
+    } else {
+      html += lineChart('ch-wpm', last, 'wpm', { title: 'Темп речи, слов в минуту', color: '#1899D6', unit: 'слов/мин', step: 50, band: [110, 150], bandLabel: 'зелёная полоса — комфортный темп, 110–150', minMax: 100 });
+      html += lineChart('ch-fpm', last, 'fpm', { title: 'Слова-паразиты в минуту — чем ниже, тем лучше', color: '#A568CC', unit: 'паразитов/мин', step: 2, minMax: 2 });
+    }
+    if (topFl.length) html += `<div class="fl-top"><b>Чаще всего проскакивают:</b><div class="fillers">${topFl.map(([w, n]) => `<span class="ftag">«${esc(w)}» ×${n}</span>`).join('')}</div></div>`;
+    html += `<details class="ch-table"><summary>Таблица по дням</summary><table><tr><th>День</th><th>Записей</th><th>Слов/мин</th><th>Паразитов/мин</th></tr>${days.slice().reverse().map((d) => `<tr><td>${fmtDay(d.d)}</td><td>${d.n}</td><td>${d.wpm}</td><td>${d.fpm}</td></tr>`).join('')}</table></details>`;
+    return html;
+  }
+
+  // Подсказка со значением при нажатии на точку графика.
+  function bindCharts(root) {
+    const days = dailyStats().slice(-14);
+    $$('.chart-card', root).forEach((card) => {
+      const key = card.dataset.key, unit = card.dataset.unit, tip = $('.chart-tip', card);
+      $$('.ch-hit', card).forEach((h) => h.onclick = () => {
+        const d = days[+h.dataset.i];
+        $$('.ch-dot', card).forEach((c, i) => c.classList.toggle('on', i === +h.dataset.i));
+        tip.innerHTML = `<b>${fmtDay(d.d)}:</b> ${d[key]} ${unit} · ${d.n} ${plural(d.n, 'запись', 'записи', 'записей')}`;
+        tip.classList.add('active');
+        hap('light');
+      });
+    });
+  }
+
   // ------------------------------------------------------------------ профиль (из шапки)
   const AVATARS = ['🦜', '🦊', '🐼', '🦁', '🐸', '🐙', '🦉', '🐯', '🐨', '🦄'];
   function achievements() {
@@ -1229,6 +1423,8 @@
       ['📝', 'Архитектор речи', 'Собрать шпаргалку в Конструкторе', S.builder.step >= BSTEPS.length],
       ['🏆', 'Мастер модуля', 'Пройти все кейсы первого модуля', MODULES[0].lessons.every((l) => isDone(l.id))],
       ['🎤', 'Без долгов', 'Выполнить голосовые задания 10 уроков', LESSONS.filter((l) => voiceOk(l.id)).length >= 10],
+      ['🏋️', 'Над ошибками', 'Пройти работу над ошибками', (S.stats.reviews || 0) >= 1],
+      ['📈', 'Видно рост', 'Записать речь в 5 разных дней', new Set(S.history.map((h) => h.d)).size >= 5],
       ['👑', 'Златоуст', `Пройти все ${LESSONS.length} кейсов`, done >= LESSONS.length],
     ];
   }
@@ -1267,6 +1463,7 @@
           <div class="stat-card"><span>🎤</span><div><b>${S.stats.speeches}</b><small>речей записано</small></div></div>
           <div class="stat-card"><span>⚡</span><div><b>${S.stats.bestWpm || '—'}</b><small>лучший темп, слов/мин</small></div></div>
         </div>
+        ${progressHTML()}
         <div class="section-title">Колода приёмов <small>${done}/${LESSONS.length}</small></div>
         <div class="deck">${LESSONS.map((l) => {
           const t = l.technique, open = isDone(l.id);
@@ -1285,6 +1482,7 @@
         <p class="app-ver">Говорун 1.0 · прогресс хранится только на этом устройстве</p>
       </div></div>`;
     $('#p-close').onclick = closeProfile;
+    bindCharts(el);
     $('#p-ava').onclick = () => { S.avatar = AVATARS[(AVATARS.indexOf(S.avatar) + 1) % AVATARS.length]; save(); sfx('tile'); hap('light'); drawProfile(); };
     $('#p-name').onclick = () => sheet(`<div class="s-ico">✏️</div><h3>Как вас зовут?</h3><input id="nm" maxlength="24" value="${esc(S.name)}"><button class="btn" data-ok>Сохранить</button>`, (s) => {
       const i = $('#nm', s); setTimeout(() => i.focus(), 200);

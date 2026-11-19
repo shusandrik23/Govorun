@@ -509,3 +509,39 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .rc-btn:active { transform: translateY(4px); box-shadow: none; }
 .rc-finish { background: var(--green); border-color: var(--green); color: #fff; box-shadow: 0 4px 0 var(--green-d); }
 .paused-label { text-align: center; color: var(--orange); font-weight: 900; font-size: 14px; margin-top: 8px; }
+
+/* ---------- Работа над ошибками ---------- */
+.review-bar { width: 100%; margin-top: 12px; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 2px solid #84D8FF; background: var(--blue-l); border-radius: 16px; box-shadow: 0 4px 0 #84D8FF; text-align: left; transition: transform .08s, box-shadow .08s; }
+.review-bar:active { transform: translateY(4px); box-shadow: none; }
+.review-bar .ch-ico { font-size: 28px; }
+.review-bar .ch-body { flex: 1; min-width: 0; }
+.review-bar .ch-body b { display: block; font-size: 15px; font-weight: 900; }
+.review-bar .ch-body small { color: var(--muted); font-size: 13px; font-weight: 800; }
+.rv-count { min-width: 30px; height: 30px; padding: 0 8px; border-radius: 15px; background: var(--red); color: #fff; font-weight: 900; display: flex; align-items: center; justify-content: center; }
+.rv-go { font-size: 26px; color: var(--blue); font-weight: 900; }
+
+/* ---------- Графики прогресса ---------- */
+.chart-card { border: 2px solid var(--gray); border-radius: 18px; padding: 12px 12px 6px; margin-top: 12px; }
+.chart-title { font-size: 15px; font-weight: 900; }
+.chart-tip { font-size: 13px; color: var(--muted); font-weight: 700; min-height: 18px; margin: 2px 0 4px; }
+.chart-tip.active { color: var(--text); }
+.chart-card svg { width: 100%; height: auto; display: block; overflow: visible; }
+.ch-grid { stroke: var(--gray); stroke-width: 1; }
+.ch-ax { font-size: 10px; fill: var(--muted); font-family: inherit; font-weight: 700; }
+.ch-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ch-dot { stroke: #fff; stroke-width: 2; transition: r .15s; }
+.ch-dot.on { r: 7; }
+.ch-hit { fill: transparent; cursor: pointer; }
+.ch-band { fill: rgba(88, 204, 2, .12); }
+.ch-band-lbl { font-size: 10px; fill: var(--green-d); font-weight: 800; font-family: inherit; }
+.stat-card .dl { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted); }
+.stat-card .dl.up { color: var(--green-d); }
+.stat-card .dl.down { color: var(--red-d); }
+.fl-top { margin-top: 12px; font-size: 14px; }
+.ch-table { margin-top: 12px; font-size: 14px; }
+.ch-table summary { color: var(--blue); font-weight: 900; cursor: pointer; padding: 6px 0; }
+.ch-table table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.ch-table th, .ch-table td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--gray); font-weight: 700; }
+.ch-table th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+.chart-sub { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); font-weight: 700; margin-top: 2px; }
+.band-key { display: inline-block; width: 14px; height: 10px; border-radius: 3px; background: rgba(88, 204, 2, .25); }
